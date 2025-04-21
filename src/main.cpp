@@ -6,7 +6,7 @@
 #include <Adafruit_NeoPixel.h>
 
 // Global LED state and brightness (initial values)
-int brightness = 0;
+int brightness = 255;
 int rgbBrightness = 0;
 
 // Temperature is the proportion of warm white to cool white
@@ -15,13 +15,27 @@ int temperature = 127;
 uint8_t warmDuty = 0;
 uint8_t coolDuty = 0;
 
+uint16_t globalHue = 0;
 bool ledOn = true;
+float speedModifier = 3.0;
 
 ESPNowClient espNow;
 
 IPAddress local_IP(192, 168, 68, 46);
-IPAddress gateway(192, 168, 68, 1);
-IPAddress subnet(255, 255, 255, 0);
+IPAddress gateway(192, 168, 1, 1);
+IPAddress subnet(255, 255, 0, 0);
+
+// Forward declarations for all effect functions
+void effectRainbow(void);
+void effectHue(void);
+void effectWhite(void);
+
+// Define an array holding functions for each effect
+void (*effects[])(void) = {
+  &effectRainbow,
+  &effectHue, // placeholder for effectHue - needs special handling due to parameters
+  &effectWhite
+};
 
 #undef NUM_LEDS
 #define NUM_LEDS 47
@@ -30,11 +44,11 @@ Adafruit_NeoPixel strip_r1(NUM_LEDS, PIN_DATA1, NEO_RGB + NEO_KHZ800);
 Adafruit_NeoPixel strip_r2(NUM_LEDS, PIN_DATA2, NEO_RGB + NEO_KHZ800);
 Adafruit_NeoPixel strip_l1(NUM_LEDS, PIN_DATA3, NEO_RGB + NEO_KHZ800);
 Adafruit_NeoPixel strip_l2(NUM_LEDS, PIN_DATA4, NEO_RGB + NEO_KHZ800);
-int cylonPos = 0;
-int cylonDir = 1;
+
+
 
 // Updates both LED channels based on ledOn and brightness
-void updateWhiteLEDs(uint8_t warmDuty, uint8_t coolDuty) {
+void setWhiteLEDs(uint8_t warmDuty, uint8_t coolDuty) {
   uint8_t warmDutyCalcd = ledOn ? warmDuty : 0;
   uint8_t coolDutyCalcd = ledOn ? coolDuty : 0;
   ledcWrite(PWM_CHANNEL_0, coolDutyCalcd);
@@ -57,7 +71,6 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
       Serial.println(command, HEX);
       break;
   }
-  updateWhiteLEDs(warmDuty, coolDuty);
 }
 
 void initOTA() {
@@ -106,15 +119,6 @@ void setup() {
   ledcAttachPin(PIN_PWM1, PWM_CHANNEL_0);
   ledcAttachPin(PIN_PWM2, PWM_CHANNEL_1);
 
-  // Calculate duty cycles based on temperature and brightness
-  // temperature: 0 (cool) to 255 (warm)
-  // For warm white (PIN_PWM1)
-  warmDuty = map(temperature, 0, 255, 0, brightness);
-  // For cool white (PIN_PWM2)
-  coolDuty = map(temperature, 0, 255, brightness, 0);
-
-  updateWhiteLEDs(warmDuty, coolDuty);
-
   // Debug output
   Serial.println("Temperature: " + String(temperature));
   Serial.println("Warm duty: " + String(warmDuty));
@@ -150,7 +154,7 @@ void setup() {
 }
 
 // New function: updateRainbowEffect() performs the rainbow animation using variable intervals
-void updateRainbowEffect() {
+void effectRainbow() {
   static unsigned long lastRainbowUpdate = 0;
   static uint8_t hue = 0;
   static unsigned long rainbowInterval = RAINBOW_INTERVAL_HIGH;
@@ -238,7 +242,7 @@ void updateRainbowEffect() {
   }
 }
 
-void updateHueMode(uint16_t hue, float speedModifier = 1.0) {
+void effectHue() {
   static float hotspots_left[3] = {0.0, NUM_LEDS * 0.3, NUM_LEDS * 0.7};
   static float hotspots_right[3] = {NUM_LEDS * 0.15, NUM_LEDS * 0.45, NUM_LEDS * 0.85};
   static float speeds_left[3] = {0.02, 0.03, 0.025};
@@ -277,17 +281,6 @@ void updateHueMode(uint16_t hue, float speedModifier = 1.0) {
       }
     }
     
-    // Handle jumps less frequently - NOT affected by speedModifier to prevent rapid resets
-    // if (now - lastJump > MIN_JUMP_INTERVAL) {
-    //   if (random(1000) < 5) { // 0.5% chance when we check
-    //     // Only jump one hotspot at a time, not all of them
-    //     int hotspotToJump = random(3);
-    //     hotspots_left[hotspotToJump] = random(NUM_LEDS);
-    //     hotspots_right[hotspotToJump] = random(NUM_LEDS);
-    //     lastJump = now;
-    //   }
-    // }
-
     // Clear all strips
     strip_r1.clear();
     strip_r2.clear();
@@ -307,7 +300,7 @@ void updateHueMode(uint16_t hue, float speedModifier = 1.0) {
       }
       
       // Apply a subtle variation to the hue
-      uint16_t pixelHue = hue + (uint16_t)(intensity * HUE_RANGE);
+      uint16_t pixelHue = globalHue + (uint16_t)(intensity * HUE_RANGE);
       
       // Set colors with full saturation and slightly variable value for depth
       uint8_t value = 220 + (uint8_t)(intensity * 35);  // 220-255 range for value
@@ -326,7 +319,7 @@ void updateHueMode(uint16_t hue, float speedModifier = 1.0) {
         intensity = max(intensity, hotspotInfluence);
       }
       
-      uint16_t pixelHue = hue + (uint16_t)(intensity * HUE_RANGE);
+      uint16_t pixelHue = globalHue + (uint16_t)(intensity * HUE_RANGE);
       uint8_t value = 220 + (uint8_t)(intensity * 35);
       uint32_t color = strip_r1.ColorHSV(pixelHue, 255, value);
       strip_r1.setPixelColor(i, color);
@@ -365,12 +358,19 @@ void setAllStripsToHue(uint16_t hue) {
   strip_l2.show();
 }
 
+void effectWhite() {
+  // Calculate duty cycles based on temperature and brightness
+  // temperature: 0 (cool) to 255 (warm)
+  // For warm white (PIN_PWM1)
+  warmDuty = map(temperature, 0, 255, 0, brightness);
+  // For cool white (PIN_PWM2)
+  coolDuty = map(temperature, 0, 255, brightness, 0);
+
+  setWhiteLEDs(warmDuty, coolDuty);
+}
+
 void loop() {
   ArduinoOTA.handle();
-  
-  // Use the new function to update the rainbow effect
-  // updateRainbowEffect();
-  updateHueMode(64500, 3.0); // Set to a more reasonable speed modifier value
-  // setAllStripsToHue(1000);
+  effects[0](); // Call the rainbow effect function
 }
 
