@@ -238,10 +238,139 @@ void updateRainbowEffect() {
   }
 }
 
-void loop() {
-    ArduinoOTA.handle();
+void updateHueMode(uint16_t hue, float speedModifier = 1.0) {
+  static float hotspots_left[3] = {0.0, NUM_LEDS * 0.3, NUM_LEDS * 0.7};
+  static float hotspots_right[3] = {NUM_LEDS * 0.15, NUM_LEDS * 0.45, NUM_LEDS * 0.85};
+  static float speeds_left[3] = {0.02, 0.03, 0.025};
+  static float speeds_right[3] = {0.018, 0.027, 0.022};
+  static unsigned long lastUpdate = 0;
+  static unsigned long lastSpeedChange = 0; // Track when we last changed speeds
+  static unsigned long lastJump = 0;        // Track when hotspots last jumped
+  
+  const uint16_t HUE_RANGE = 1000;
+  const unsigned long MIN_SPEED_CHANGE_INTERVAL = 2000; // Minimum 2 seconds between speed changes
+  const unsigned long MIN_JUMP_INTERVAL = 5000;         // Minimum 5 seconds between jumps
+  
+  unsigned long now = millis();
+  if (now - lastUpdate >= 10) { // Update frequency
+    lastUpdate = now;
     
-    // Use the new function to update the rainbow effect
-    // updateRainbowEffect();
+    // Update hotspot positions with slow movement, applying speed modifier
+    for (int i = 0; i < 3; i++) {
+      hotspots_left[i] += speeds_left[i] * speedModifier;
+      hotspots_right[i] += speeds_right[i] * speedModifier;
+      
+      // Reset positions when they exceed strip length
+      if (hotspots_left[i] >= NUM_LEDS) hotspots_left[i] -= NUM_LEDS;
+      if (hotspots_right[i] >= NUM_LEDS) hotspots_right[i] -= NUM_LEDS;
+    }
+    
+    // Handle speed changes less frequently
+    if (now - lastSpeedChange > MIN_SPEED_CHANGE_INTERVAL) {
+      if (random(1000) < 10) { // 1% chance when we check
+        for (int i = 0; i < 3; i++) {
+          // Keep speeds in a reasonable range
+          speeds_left[i] = 0.01 + (random(15) / 1000.0);
+          speeds_right[i] = 0.01 + (random(15) / 1000.0);
+        }
+        lastSpeedChange = now;
+      }
+    }
+    
+    // Handle jumps less frequently - NOT affected by speedModifier to prevent rapid resets
+    // if (now - lastJump > MIN_JUMP_INTERVAL) {
+    //   if (random(1000) < 5) { // 0.5% chance when we check
+    //     // Only jump one hotspot at a time, not all of them
+    //     int hotspotToJump = random(3);
+    //     hotspots_left[hotspotToJump] = random(NUM_LEDS);
+    //     hotspots_right[hotspotToJump] = random(NUM_LEDS);
+    //     lastJump = now;
+    //   }
+    // }
+
+    // Clear all strips
+    strip_r1.clear();
+    strip_r2.clear();
+    strip_l1.clear();
+    strip_l2.clear();
+    
+    // Apply the lava effect to left strips
+    for (int i = 0; i < NUM_LEDS; i++) {
+      float intensity = 0.0;
+      
+      // Calculate influence from all hotspots
+      for (int h = 0; h < 3; h++) {
+        float distance = min(abs(i - hotspots_left[h]), NUM_LEDS - abs(i - hotspots_left[h])) / (float)(NUM_LEDS/4);
+        // Stronger, more focused hotspots
+        float hotspotInfluence = exp(-distance * distance * 2);
+        intensity = max(intensity, hotspotInfluence);
+      }
+      
+      // Apply a subtle variation to the hue
+      uint16_t pixelHue = hue + (uint16_t)(intensity * HUE_RANGE);
+      
+      // Set colors with full saturation and slightly variable value for depth
+      uint8_t value = 220 + (uint8_t)(intensity * 35);  // 220-255 range for value
+      uint32_t color = strip_l1.ColorHSV(pixelHue, 255, value);
+      strip_l1.setPixelColor(i, color);
+      strip_l2.setPixelColor((i + STAGGER_OFFSET) % NUM_LEDS, color);
+    }
+    
+    // Apply the lava effect to right strips (similar but with different hotspot positions)
+    for (int i = 0; i < NUM_LEDS; i++) {
+      float intensity = 0.0;
+      
+      for (int h = 0; h < 3; h++) {
+        float distance = min(abs(i - hotspots_right[h]), NUM_LEDS - abs(i - hotspots_right[h])) / (float)(NUM_LEDS/4);
+        float hotspotInfluence = exp(-distance * distance * 2);
+        intensity = max(intensity, hotspotInfluence);
+      }
+      
+      uint16_t pixelHue = hue + (uint16_t)(intensity * HUE_RANGE);
+      uint8_t value = 220 + (uint8_t)(intensity * 35);
+      uint32_t color = strip_r1.ColorHSV(pixelHue, 255, value);
+      strip_r1.setPixelColor(i, color);
+      strip_r2.setPixelColor((i + STAGGER_OFFSET) % NUM_LEDS, color);
+    }
+
+    // Set the first pixel on each left strip to black
+    strip_l1.setPixelColor(0, 0);
+    strip_l2.setPixelColor(0, 0);
+    
+    // Update all strips
+    strip_l1.show();
+    strip_l2.show();
+    strip_r1.show();
+    strip_r2.show();
+  }
+}
+
+void setAllStripsToHue(uint16_t hue) {
+  // Convert HSV to RGB color
+  uint32_t color = strip_r1.ColorHSV(hue, 255, 255);
+  
+  // Fill all strips with the same color
+  strip_r1.fill(color, 0, NUM_LEDS);
+  strip_r2.fill(color, 0, NUM_LEDS);
+  strip_l1.fill(color, 0, NUM_LEDS);
+  strip_l2.fill(color, 0, NUM_LEDS);
+
+  strip_l1.setPixelColor(0, 0);
+  strip_l2.setPixelColor(0, 0);
+  
+  // Show the changes on all strips
+  strip_r1.show();
+  strip_r2.show();
+  strip_l1.show();
+  strip_l2.show();
+}
+
+void loop() {
+  ArduinoOTA.handle();
+  
+  // Use the new function to update the rainbow effect
+  // updateRainbowEffect();
+  updateHueMode(64500, 3.0); // Set to a more reasonable speed modifier value
+  // setAllStripsToHue(1000);
 }
 
