@@ -5,25 +5,24 @@
 #include <ArduinoOTA.h>
 #include <Adafruit_NeoPixel.h>
 
-// Global LED state and brightness (initial values)
-int brightness = 255;
-int rgbBrightness = 0;
-
-// Temperature is the proportion of warm white to cool white
-// 0 is all cool white, 255 is all warm white
-int temperature = 127;
-uint8_t warmDuty = 0;
-uint8_t coolDuty = 0;
-
-uint16_t globalHue = 0;
-bool ledOn = true;
-float speedModifier = 3.0;
-
 ESPNowClient espNow;
 
 IPAddress local_IP(192, 168, 68, 46);
 IPAddress gateway(192, 168, 1, 1);
 IPAddress subnet(255, 255, 0, 0);
+
+
+// Temperature is the proportion of warm white to cool white
+// 0 is all cool white, 65535 is all warm white
+uint16_t temperature = 32767;
+
+int brightness = 255;
+int rgbBrightness = 255;
+uint16_t globalHue = 0;
+bool ledOn = true;
+float speedModifier = 3.0;
+int ledMode = 0; // 0: Rainbow, 1: Hue, 2: White
+
 
 // Forward declarations for all effect functions
 void effectRainbow(void);
@@ -37,34 +36,55 @@ void (*effects[])(void) = {
   &effectWhite
 };
 
-#undef NUM_LEDS
-#define NUM_LEDS 47
-#define STAGGER_OFFSET 2
 Adafruit_NeoPixel strip_r1(NUM_LEDS, PIN_DATA1, NEO_RGB + NEO_KHZ800);
 Adafruit_NeoPixel strip_r2(NUM_LEDS, PIN_DATA2, NEO_RGB + NEO_KHZ800);
 Adafruit_NeoPixel strip_l1(NUM_LEDS, PIN_DATA3, NEO_RGB + NEO_KHZ800);
 Adafruit_NeoPixel strip_l2(NUM_LEDS, PIN_DATA4, NEO_RGB + NEO_KHZ800);
 
 
-
 // Updates both LED channels based on ledOn and brightness
-void setWhiteLEDs(uint8_t warmDuty, uint8_t coolDuty) {
-  uint8_t warmDutyCalcd = ledOn ? warmDuty : 0;
-  uint8_t coolDutyCalcd = ledOn ? coolDuty : 0;
+void setWhiteLEDs(uint16_t warmDuty, uint16_t coolDuty) {
+  uint16_t warmDutyCalcd = ledOn ? warmDuty : 0;
+  uint16_t coolDutyCalcd = ledOn ? coolDuty : 0;
   ledcWrite(PWM_CHANNEL_0, coolDutyCalcd);
   ledcWrite(PWM_CHANNEL_1, warmDutyCalcd);
 }
 
 void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
-  if (len < 2) return;
+  if (len < 2) return; // Need at least command and 1 byte of state
+  
   uint8_t command = data[0];
-  uint8_t state = data[1];
+  uint16_t value;
+  
+  // Handle state value based on payload length
+  if (len == 2) {
+    // If only 1 byte of state, expand it to 16-bit range (0-255 to 0-65535)
+    value = (uint16_t)data[1] << 8 | data[1];
+  } else if (len >= 3) {
+    // If 2 bytes of state, combine into 16-bit integer
+    value = (uint16_t)data[1] << 8 | data[2];
+  } else {
+    return; // Invalid length
+  }
+  
   switch(command) {
     case COMMAND_BRIGHTNESS:
-      brightness = state;
+      brightness = value >> 8; // Scale back to 0-255 for brightness
+      rgbBrightness = brightness;
       break;
     case COMMAND_TOGGLE:
-      ledOn = (state == 1);
+      ledOn = (value > 0);
+      break;
+    case COMMAND_MODE:
+      if (value >= MODE_MIN && value <= MODE_MAX) {
+        ledMode = value;
+      }
+      break;
+    case COMMAND_HUE:
+      globalHue = value;
+      break;
+    case COMMAND_TEMPERATURE:
+      temperature = value;
       break;
     default:
       Serial.print("Unknown command received: 0x");
@@ -121,9 +141,7 @@ void setup() {
 
   // Debug output
   Serial.println("Temperature: " + String(temperature));
-  Serial.println("Warm duty: " + String(warmDuty));
-  Serial.println("Cool duty: " + String(coolDuty));
-
+  Serial.println("Brightness: " + String(brightness));
 
   if (!espNow.begin()) {
     Serial.println("Failed to initialize ESP-NOW client");
@@ -359,18 +377,18 @@ void setAllStripsToHue(uint16_t hue) {
 }
 
 void effectWhite() {
-  // Calculate duty cycles based on temperature and brightness
-  // temperature: 0 (cool) to 255 (warm)
-  // For warm white (PIN_PWM1)
-  warmDuty = map(temperature, 0, 255, 0, brightness);
-  // For cool white (PIN_PWM2)
-  coolDuty = map(temperature, 0, 255, brightness, 0);
+  // temperature: 0 (cool) to 65535 (warm)
+  uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1; // Maximum duty cycle for the set resolution
+  uint16_t scaledBrightness = map(brightness, 0, 255, 0, maxDuty);
+  
+  uint16_t warmDuty = map(temperature, 0, 65535, 0, scaledBrightness);
+  uint16_t coolDuty = map(temperature, 0, 65535, scaledBrightness, 0);
 
   setWhiteLEDs(warmDuty, coolDuty);
 }
 
 void loop() {
   ArduinoOTA.handle();
-  effects[0](); // Call the rainbow effect function
+  effects[ledMode]();
 }
 
