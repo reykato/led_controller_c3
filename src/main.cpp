@@ -15,13 +15,11 @@ IPAddress subnet(255, 255, 0, 0);
 // Temperature is the proportion of warm white to cool white
 // 0 is all cool white, 65535 is all warm white
 uint16_t temperature = 32767;
-
-int brightness = 255;
-int rgbBrightness = 255;
+uint16_t brightness = 255;
 uint16_t globalHue = 0;
 bool ledOn = true;
 float speedModifier = 3.0;
-int ledMode = 0; // 0: Rainbow, 1: Hue, 2: White
+int ledMode = 2; // 0: Rainbow, 1: Hue, 2: White
 
 
 // Forward declarations for all effect functions
@@ -51,6 +49,17 @@ void setWhiteLEDs(uint16_t warmDuty, uint16_t coolDuty) {
 }
 
 void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
+  // Debug output for ESP-NOW message reception
+  Serial.print("ESP-NOW message received from: ");
+  for (int i = 0; i < 6; i++) {
+    Serial.print(mac[i], HEX);
+    if (i < 5) Serial.print(":");
+  }
+  Serial.print(" Length: ");
+  Serial.print(len);
+  Serial.print(" Data[0]: ");
+  Serial.println(data[0], HEX);
+  
   if (len < 2) return; // Need at least command and 1 byte of state
   
   uint8_t command = data[0];
@@ -67,10 +76,14 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
     return; // Invalid length
   }
   
+  Serial.print("Processed command: 0x");
+  Serial.print(command, HEX);
+  Serial.print(" Value: ");
+  Serial.println(value);
+  
   switch(command) {
     case COMMAND_BRIGHTNESS:
       brightness = value >> 8; // Scale back to 0-255 for brightness
-      rgbBrightness = brightness;
       break;
     case COMMAND_TOGGLE:
       ledOn = (value > 0);
@@ -122,17 +135,135 @@ void initWiFi(const char* ssid, const char* password) {
       Serial.println(WiFi.localIP());
       Serial.println("Configuring OTA...");
       initOTA();
+      
+      // Re-initialize ESP-NOW after WiFi is connected
+      // This is important as connecting to WiFi can affect ESP-NOW
+      if (esp_now_init() == ESP_OK) {
+        Serial.println("ESP-NOW re-initialized successfully");
+        espNow.setReceiveCallback(onReceive);
+      } else {
+        Serial.println("Failed to re-initialize ESP-NOW");
+      }
   } else {
       Serial.println("\nFailed to connect to WiFi.");
       ESP.restart();
   }
 }
 
+// Show a specific boot stage indicator on the LED strips
+void showBootIndicator(int stage) {
+  // All strips should be initialized before calling this
+  uint32_t colorRed = strip_r1.Color(255, 0, 0);      // Red
+  uint32_t colorGreen = strip_r1.Color(0, 255, 0);    // Green
+  uint32_t colorBlue = strip_r1.Color(0, 0, 255);     // Blue
+  uint32_t colorYellow = strip_r1.Color(255, 255, 0); // Yellow
+  uint32_t colorPurple = strip_r1.Color(128, 0, 255); // Purple
+  uint32_t colorCyan = strip_r1.Color(0, 255, 255);   // Cyan
+  uint32_t colorWhite = strip_r1.Color(255, 255, 255); // White
+  
+  // Clear all strips first
+  strip_r1.clear();
+  strip_r2.clear();
+  strip_l1.clear();
+  strip_l2.clear();
+  
+  int numLedsToLight = 5; // Number of LEDs to light in each stage
+  uint32_t stageColor;
+  
+  // Select color based on boot stage
+  switch(stage) {
+    case 1: // Initial boot
+      stageColor = colorRed;
+      break;
+    case 2: // After ESP-NOW init
+      stageColor = colorGreen;
+      break;
+    case 3: // During WiFi connection
+      stageColor = colorBlue;
+      break;
+    case 4: // After WiFi connected
+      stageColor = colorYellow;
+      break;
+    case 5: // After OTA initialized
+      stageColor = colorPurple;
+      break;
+    case 6: // Ready to start main loop
+      stageColor = colorWhite;
+      break;
+    default:
+      stageColor = colorCyan;
+  }
+  
+  // Light a section of LEDs on each strip based on the boot stage
+  // Each stage lights up different LEDs so it's visually distinct
+  int startPos = (stage - 1) * numLedsToLight % (NUM_LEDS - numLedsToLight);
+  
+  for (int i = 0; i < numLedsToLight; i++) {
+    // Set different patterns for different strips to make it more visually distinctive
+    strip_r1.setPixelColor(startPos + i, stageColor);
+    strip_r2.setPixelColor((startPos + i + 2) % NUM_LEDS, stageColor);
+    strip_l1.setPixelColor((startPos + i + 4) % NUM_LEDS, stageColor);
+    strip_l2.setPixelColor((startPos + i + 6) % NUM_LEDS, stageColor);
+  }
+  
+  // Show all strips
+  strip_r1.show();
+  strip_r2.show();
+  strip_l1.show();
+  strip_l2.show();
+  
+  delay(100); // Short delay to ensure the LEDs update
+}
+
 void setup() {
   Serial.begin(115200);
-
+  Serial.println("ESP32 LED Controller Starting...");
+  
+  // Initialize LED strips early so we can use them for boot indicators
+  strip_r1.begin();  
+  strip_r2.begin();
+  strip_l1.begin();
+  strip_l2.begin();
+  strip_r1.setBrightness(brightness);
+  strip_r2.setBrightness(brightness);
+  strip_l1.setBrightness(brightness);
+  strip_l2.setBrightness(brightness);
+  
+  // Stage 1: Initial boot indicator
+  showBootIndicator(1);
+  delay(500);
+  
+  // Initialize ESP-NOW first in receive-only mode
+  WiFi.mode(WIFI_STA);  // Set WiFi to station mode for ESP-NOW
+  WiFi.disconnect();    // Disconnect from any WiFi networks
+  
+  if (!espNow.begin()) {
+    Serial.println("Failed to initialize ESP-NOW client");
+  } else {
+    Serial.println("ESP-NOW initialized successfully in receive-only mode");
+    // Display MAC address for easy identification
+    Serial.print("My MAC Address: ");
+    Serial.println(WiFi.macAddress());
+    
+    // Stage 2: ESP-NOW initialized indicator
+    showBootIndicator(2);
+    delay(500);
+  }
+  
+  espNow.setReceiveCallback(onReceive);
+  
+  // Stage 3: About to connect to WiFi
+  showBootIndicator(3);
+  delay(300);
+  
+  // Then initialize regular WiFi for OTA updates
   initWiFi(WIFI_SSID, WIFI_PASSWORD);
   
+  // Stage 4: WiFi connected indicator
+  showBootIndicator(4);
+  delay(500);
+  
+  // LED strip setup
   ledcSetup(PWM_CHANNEL_0, PWM_FREQ, PWM_RESOLUTION);
   ledcSetup(PWM_CHANNEL_1, PWM_FREQ, PWM_RESOLUTION);
 
@@ -142,33 +273,34 @@ void setup() {
   // Debug output
   Serial.println("Temperature: " + String(temperature));
   Serial.println("Brightness: " + String(brightness));
-
-  if (!espNow.begin()) {
-    Serial.println("Failed to initialize ESP-NOW client");
-  }
-
-  espNow.setReceiveCallback(onReceive);
-
-  strip_r1.begin();
-  strip_r1.fill(strip_r1.Color(255, 180, 170), 0, NUM_LEDS);
-  strip_r1.setBrightness(rgbBrightness);
-  strip_r1.show();
   
-  strip_r2.begin();
-  strip_r2.fill(strip_r2.Color(255, 180, 170), 0, NUM_LEDS);
-  strip_r2.setBrightness(rgbBrightness);
+  // Stage 5: LEDs configured
+  showBootIndicator(5);
+  delay(500);
+  
+  // Stage 6: Boot complete - ready to run main loop
+  showBootIndicator(6);
+  delay(800);
+  
+  // Clear all strips to prepare for the main loop functionality
+  strip_r1.clear();
+  strip_r2.clear();
+  strip_l1.clear();
+  strip_l2.clear();
+  strip_r1.show();
   strip_r2.show();
-
-  strip_l1.begin();
-  strip_l1.fill(strip_l1.Color(255, 180, 170), 0, NUM_LEDS);
-  strip_l1.setBrightness(rgbBrightness);
   strip_l1.show();
-
-  strip_l2.begin();
-  strip_l2.fill(strip_l2.Color(255, 180, 170), 0, NUM_LEDS);
-  strip_l2.setBrightness(rgbBrightness);
   strip_l2.show();
-
+  
+  // Also make sure the white LEDs start in the correct state
+  if (ledMode == 2) {
+    // Initialize white LEDs if in white mode
+    uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1;
+    uint16_t scaledBrightness = map(brightness, 0, 255, 0, maxDuty);
+    uint16_t warmDuty = map(temperature, 0, 65535, 0, scaledBrightness);
+    uint16_t coolDuty = map(temperature, 0, 65535, scaledBrightness, 0);
+    setWhiteLEDs(warmDuty, coolDuty);
+  }
 }
 
 // New function: updateRainbowEffect() performs the rainbow animation using variable intervals

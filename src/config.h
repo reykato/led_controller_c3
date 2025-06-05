@@ -29,12 +29,14 @@
 #define COMMAND_HUE 0x06
 
 // BLE Mode and Brightness Value Range
-#define MODE_MIN   0
-#define MODE_MAX   2
-#define BRIGHT_MIN 0
-#define BRIGHT_MAX 255
-#define HUE_MIN    0
-#define HUE_MAX    65535 // 0-65535 for 16-bit hue
+#define MODE_MIN 0
+#define MODE_MAX 2
+#define BRIGHTNESS_MIN 0
+#define BRIGHTNESS_MAX 65535
+#define HUE_MIN 0
+#define HUE_MAX 65535
+#define TEMPERATURE_MIN 0
+#define TEMPERATURE_MAX 65535
 
 // Effect Constants
 #define RAINBOW_INTERVAL_HIGH 23
