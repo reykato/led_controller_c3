@@ -7,31 +7,37 @@
 
 ESPNowClient espNow;
 
-IPAddress local_IP(192, 168, 68, 46);
+IPAddress local_IP(192, 168, 1, 245);
 IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 0, 0);
+IPAddress subnet(255, 255, 255, 0);
 
 
 // Temperature is the proportion of warm white to cool white
 // 0 is all cool white, 65535 is all warm white
 uint16_t temperature = 32767;
-uint16_t brightness = 255;
+uint16_t brightness = 65535; // Using uint16_t with range 0-65535
 uint16_t globalHue = 0;
 bool ledOn = true;
 float speedModifier = 3.0;
 int ledMode = 2; // 0: Rainbow, 1: Hue, 2: White
+
+// Button state tracking
+bool buttonPressed = false;
+unsigned long lastButtonPress = 0;  // For debouncing
 
 
 // Forward declarations for all effect functions
 void effectRainbow(void);
 void effectHue(void);
 void effectWhite(void);
+void effectOff(void);
 
 // Define an array holding functions for each effect
 void (*effects[])(void) = {
   &effectRainbow,
   &effectHue, // placeholder for effectHue - needs special handling due to parameters
-  &effectWhite
+  &effectWhite,
+  &effectOff
 };
 
 Adafruit_NeoPixel strip_r1(NUM_LEDS, PIN_DATA1, NEO_RGB + NEO_KHZ800);
@@ -46,6 +52,28 @@ void setWhiteLEDs(uint16_t warmDuty, uint16_t coolDuty) {
   uint16_t coolDutyCalcd = ledOn ? coolDuty : 0;
   ledcWrite(PWM_CHANNEL_0, coolDutyCalcd);
   ledcWrite(PWM_CHANNEL_1, warmDutyCalcd);
+}
+
+// Button handler for toggling LED state
+void checkButton() {
+  bool currentState = digitalRead(BUTTON_PIN);
+  unsigned long now = millis();
+  
+  // Check if button is pressed (LOW when pressed because of pull-up)
+  if (!currentState && !buttonPressed && (now - lastButtonPress > BUTTON_DEBOUNCE_TIME)) {
+    buttonPressed = true;
+    lastButtonPress = now;
+    
+    // Toggle LED state
+    ledOn = true;
+    ledMode += 1; // Cycle through modes
+    if (ledMode > MODE_MAX) {
+      ledMode = MODE_MIN; // Reset to first mode
+    }
+  } else if (currentState && buttonPressed) {
+    // Button released
+    buttonPressed = false;
+  }
 }
 
 void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
@@ -80,10 +108,16 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
   Serial.print(command, HEX);
   Serial.print(" Value: ");
   Serial.println(value);
-  
-  switch(command) {
-    case COMMAND_BRIGHTNESS:
-      brightness = value >> 8; // Scale back to 0-255 for brightness
+  switch(command) {    case COMMAND_BRIGHTNESS:
+      brightness = value; // Use full 16-bit value (0-65535)
+      {
+        // Also update the NeoPixel brightness immediately
+        uint8_t neopixelBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, 255);
+        strip_r1.setBrightness(neopixelBrightness);
+        strip_r2.setBrightness(neopixelBrightness);
+        strip_l1.setBrightness(neopixelBrightness);
+        strip_l2.setBrightness(neopixelBrightness);
+      }
       break;
     case COMMAND_TOGGLE:
       ledOn = (value > 0);
@@ -161,6 +195,10 @@ void showBootIndicator(int stage) {
   uint32_t colorCyan = strip_r1.Color(0, 255, 255);   // Cyan
   uint32_t colorWhite = strip_r1.Color(255, 255, 255); // White
   
+  // Ensure white LED strips (PWM controlled) are off during boot
+  ledcWrite(PWM_CHANNEL_0, 0);
+  ledcWrite(PWM_CHANNEL_1, 0);
+  
   // Clear all strips first
   strip_r1.clear();
   strip_r2.clear();
@@ -219,19 +257,24 @@ void setup() {
   Serial.begin(115200);
   Serial.println("ESP32 LED Controller Starting...");
   
-  // Initialize LED strips early so we can use them for boot indicators
+  // Configure boot button pin with internal pull-up
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  Serial.println("Boot button configured on GPIO" + String(BUTTON_PIN));
+    // Initialize LED strips early so we can use them for boot indicators
   strip_r1.begin();  
   strip_r2.begin();
   strip_l1.begin();
   strip_l2.begin();
-  strip_r1.setBrightness(brightness);
-  strip_r2.setBrightness(brightness);
-  strip_l1.setBrightness(brightness);
-  strip_l2.setBrightness(brightness);
+  
+  // Map 16-bit brightness (0-65535) to 8-bit (0-255) for NeoPixels
+  uint8_t neopixelBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, 255);
+  strip_r1.setBrightness(neopixelBrightness);
+  strip_r2.setBrightness(neopixelBrightness);
+  strip_l1.setBrightness(neopixelBrightness);
+  strip_l2.setBrightness(neopixelBrightness);
   
   // Stage 1: Initial boot indicator
   showBootIndicator(1);
-  delay(500);
   
   // Initialize ESP-NOW first in receive-only mode
   WiFi.mode(WIFI_STA);  // Set WiFi to station mode for ESP-NOW
@@ -247,21 +290,18 @@ void setup() {
     
     // Stage 2: ESP-NOW initialized indicator
     showBootIndicator(2);
-    delay(500);
   }
   
   espNow.setReceiveCallback(onReceive);
   
   // Stage 3: About to connect to WiFi
   showBootIndicator(3);
-  delay(300);
   
   // Then initialize regular WiFi for OTA updates
   initWiFi(WIFI_SSID, WIFI_PASSWORD);
   
   // Stage 4: WiFi connected indicator
   showBootIndicator(4);
-  delay(500);
   
   // LED strip setup
   ledcSetup(PWM_CHANNEL_0, PWM_FREQ, PWM_RESOLUTION);
@@ -276,11 +316,9 @@ void setup() {
   
   // Stage 5: LEDs configured
   showBootIndicator(5);
-  delay(500);
   
   // Stage 6: Boot complete - ready to run main loop
   showBootIndicator(6);
-  delay(800);
   
   // Clear all strips to prepare for the main loop functionality
   strip_r1.clear();
@@ -291,14 +329,13 @@ void setup() {
   strip_r2.show();
   strip_l1.show();
   strip_l2.show();
-  
   // Also make sure the white LEDs start in the correct state
   if (ledMode == 2) {
     // Initialize white LEDs if in white mode
-    uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1;
-    uint16_t scaledBrightness = map(brightness, 0, 255, 0, maxDuty);
-    uint16_t warmDuty = map(temperature, 0, 65535, 0, scaledBrightness);
-    uint16_t coolDuty = map(temperature, 0, 65535, scaledBrightness, 0);
+    uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1; // 4095 for 12-bit resolution
+    uint16_t scaledBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, maxDuty);
+    uint16_t warmDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, 0, scaledBrightness);
+    uint16_t coolDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, scaledBrightness, 0);
     setWhiteLEDs(warmDuty, coolDuty);
   }
 }
@@ -314,6 +351,17 @@ void effectRainbow() {
   static bool isWaiting = false;
   static float transitionProgress = 0.0;
   static const float transitionSpeed = 0.005;  // Controls transition speed
+  
+  // If LEDs are off, clear all strips and return
+  if (!ledOn) {
+    if (strip_r1.getBrightness() > 0) {
+      strip_r1.clear(); strip_r1.show();
+      strip_r2.clear(); strip_r2.show();
+      strip_l1.clear(); strip_l1.show();
+      strip_l2.clear(); strip_l2.show();
+    }
+    return;
+  }
   
   unsigned long now = millis();
   if (now - lastRainbowUpdate >= rainbowInterval) {
@@ -400,6 +448,17 @@ void effectHue() {
   static unsigned long lastUpdate = 0;
   static unsigned long lastSpeedChange = 0; // Track when we last changed speeds
   static unsigned long lastJump = 0;        // Track when hotspots last jumped
+  
+  // If LEDs are off, clear all strips and return
+  if (!ledOn) {
+    if (strip_r1.getBrightness() > 0) {
+      strip_r1.clear(); strip_r1.show();
+      strip_r2.clear(); strip_r2.show();
+      strip_l1.clear(); strip_l1.show();
+      strip_l2.clear(); strip_l2.show();
+    }
+    return;
+  }
   
   const uint16_t HUE_RANGE = 1000;
   const unsigned long MIN_SPEED_CHANGE_INTERVAL = 2000; // Minimum 2 seconds between speed changes
@@ -488,6 +547,26 @@ void effectHue() {
   }
 }
 
+void effectOff() {
+  // Turn off all LEDs
+  ledOn = false;
+  
+  // Clear all NeoPixel strips
+  strip_r1.clear();
+  strip_r2.clear();
+  strip_l1.clear();
+  strip_l2.clear();
+  
+  // Show the cleared state
+  strip_r1.show();
+  strip_r2.show();
+  strip_l1.show();
+  strip_l2.show();
+  
+  // Also turn off white LEDs
+  setWhiteLEDs(0, 0);
+}
+
 void setAllStripsToHue(uint16_t hue) {
   // Convert HSV to RGB color
   uint32_t color = strip_r1.ColorHSV(hue, 255, 255);
@@ -509,18 +588,77 @@ void setAllStripsToHue(uint16_t hue) {
 }
 
 void effectWhite() {
-  // temperature: 0 (cool) to 65535 (warm)
-  uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1; // Maximum duty cycle for the set resolution
-  uint16_t scaledBrightness = map(brightness, 0, 255, 0, maxDuty);
+  // For PWM white LEDs
+  static uint16_t lastBrightness = 0;
+  static uint16_t lastTemperature = 0;
   
-  uint16_t warmDuty = map(temperature, 0, 65535, 0, scaledBrightness);
-  uint16_t coolDuty = map(temperature, 0, 65535, scaledBrightness, 0);
+  // Only update white LEDs if values have changed
+  if (lastBrightness != brightness || lastTemperature != temperature || !ledOn) {
+    uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1;
+    uint16_t scaledBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, maxDuty);
+    uint16_t warmDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, 0, scaledBrightness);
+    uint16_t coolDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, scaledBrightness, 0);
+    
+    setWhiteLEDs(warmDuty, coolDuty);
+    
+    lastBrightness = brightness;
+    lastTemperature = temperature;
+  }
 
-  setWhiteLEDs(warmDuty, coolDuty);
+  // For NeoPixel strips
+  static uint16_t lastNeopixelBrightness = 0;
+  static bool needsUpdate = true;
+  
+  // If LEDs are off, clear all NeoPixel strips and return early
+  if (!ledOn) {
+    if (strip_r1.getBrightness() > 0) {
+      // Turn off all NeoPixel strips
+      strip_r1.clear(); strip_r1.show();
+      strip_r2.clear(); strip_r2.show();
+      strip_l1.clear(); strip_l1.show();
+      strip_l2.clear(); strip_l2.show();
+      needsUpdate = true; // Force update when turned back on
+    }
+    return;
+  }
+  
+  // Calculate NeoPixel brightness value only once
+  uint8_t neopixelBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, 100);
+    // Only update NeoPixels if brightness changed or first run
+  if (lastNeopixelBrightness != neopixelBrightness || needsUpdate) {
+    // Calculate color once - warm white for NeoPixels
+    uint32_t finalColor = strip_r1.Color(255, 150, 100);
+    
+    // Update all strips with the same brightness and color
+    strip_r1.setBrightness(neopixelBrightness);
+    strip_r2.setBrightness(neopixelBrightness);
+    strip_l1.setBrightness(neopixelBrightness);
+    strip_l2.setBrightness(neopixelBrightness);
+    
+    strip_r1.fill(finalColor, 0, NUM_LEDS);
+    strip_r2.fill(finalColor, 0, NUM_LEDS);
+    strip_l1.fill(finalColor, 0, NUM_LEDS);
+    strip_l2.fill(finalColor, 0, NUM_LEDS);
+    
+    strip_l1.setPixelColor(0, 0);
+    strip_l2.setPixelColor(0, 0);
+    
+    // Show all strips
+    strip_r1.show();
+    strip_r2.show();
+    strip_l1.show();
+    strip_l2.show();
+    
+    lastNeopixelBrightness = neopixelBrightness;
+    needsUpdate = false;
+  }
+
+  delay(10);
 }
 
 void loop() {
   ArduinoOTA.handle();
+  checkButton();  // Check if the boot button was pressed
   effects[ledMode]();
 }
 

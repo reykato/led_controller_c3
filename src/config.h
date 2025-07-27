@@ -2,14 +2,14 @@
 #define CONFIG_H
 
 // WiFi Configuration
-#define WIFI_SSID     "new-kids-iot"
-#define WIFI_PASSWORD "tangle4-tip-dun"
+#define WIFI_SSID     "T&A IoT"
+#define WIFI_PASSWORD "beepb00pbeep"
 
 // PWM Configuration
-#define PWM_FREQ       800   // frequency in Hz
+#define PWM_FREQ       400   // frequency in Hz
 #define PWM_CHANNEL_0  0
 #define PWM_CHANNEL_1  1
-#define PWM_RESOLUTION 16       // 16-bit resolution (0-65535)
+#define PWM_RESOLUTION 12       // 12-bit resolution (0-4095)
 
 // LED Definitions
 #define PIN_PWM1 20
@@ -30,7 +30,7 @@
 
 // BLE Mode and Brightness Value Range
 #define MODE_MIN 0
-#define MODE_MAX 2
+#define MODE_MAX 3
 #define BRIGHTNESS_MIN 0
 #define BRIGHTNESS_MAX 65535
 #define HUE_MIN 0
@@ -42,5 +42,9 @@
 #define RAINBOW_INTERVAL_HIGH 23
 #define RAINBOW_INTERVAL_LOW  4
 #define STAGGER_OFFSET 2
+
+// Button Configuration
+#define BUTTON_PIN 9  // GPIO9 for the boot button
+#define BUTTON_DEBOUNCE_TIME 200  // Debounce time in milliseconds
 
 #endif
