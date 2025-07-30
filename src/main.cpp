@@ -34,11 +34,10 @@ void (*effects[])(void) = {
   &effectOff
 };
 
-Adafruit_NeoPixel strip_r1(NUM_LEDS, PIN_DATA1, NEO_RGB + NEO_KHZ800);
-Adafruit_NeoPixel strip_r2(NUM_LEDS, PIN_DATA2, NEO_RGB + NEO_KHZ800);
-Adafruit_NeoPixel strip_l1(NUM_LEDS, PIN_DATA3, NEO_RGB + NEO_KHZ800);
-Adafruit_NeoPixel strip_l2(NUM_LEDS, PIN_DATA4, NEO_RGB + NEO_KHZ800);
-
+Adafruit_NeoPixel strip_l1(NUM_LEDS, PIN_DATA1, NEO_RGB + NEO_KHZ800);
+Adafruit_NeoPixel strip_l2(NUM_LEDS, PIN_DATA2, NEO_RGB + NEO_KHZ800);
+Adafruit_NeoPixel strip_r1(NUM_LEDS, PIN_DATA3, NEO_RGB + NEO_KHZ800);
+Adafruit_NeoPixel strip_r2(NUM_LEDS, PIN_DATA4, NEO_RGB + NEO_KHZ800);
 
 // Updates both LED channels based on ledOn and brightness
 void setWhiteLEDs(uint16_t warmDuty, uint16_t coolDuty) {
