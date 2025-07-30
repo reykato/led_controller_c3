@@ -2,7 +2,6 @@
 #include "config.h"  // Using configuration constants defined in config.h
 #include "ESPNowClient.h"
 #include <WiFi.h>
-#include <ArduinoOTA.h>
 #include <Adafruit_NeoPixel.h>
 
 ESPNowClient espNow;
@@ -91,25 +90,35 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
   if (len < 2) return; // Need at least command and 1 byte of state
   
   uint8_t command = data[0];
-  uint16_t value;
+  uint8_t value8bit = data[1];  // Always use 8-bit value from remote
+  uint16_t value16bit;
   
-  // Handle state value based on payload length
-  if (len == 2) {
-    // If only 1 byte of state, expand it to 16-bit range (0-255 to 0-65535)
-    value = (uint16_t)data[1] << 8 | data[1];
-  } else if (len >= 3) {
-    // If 2 bytes of state, combine into 16-bit integer
-    value = (uint16_t)data[1] << 8 | data[2];
+  // Handle state value based on command type
+  if (command == COMMAND_MODE || command == COMMAND_TOGGLE) {
+    // Mode and toggle commands use 8-bit values directly
+    value16bit = value8bit;
   } else {
-    return; // Invalid length
+    // Other commands (brightness, hue, temperature) expand 8-bit to 16-bit
+    if (len == 2) {
+      // If only 1 byte of state, expand it to 16-bit range (0-255 to 0-65535)
+      value16bit = (uint16_t)data[1] << 8 | data[1];
+    } else if (len >= 3) {
+      // If 2 bytes of state, combine into 16-bit integer
+      value16bit = (uint16_t)data[1] << 8 | data[2];
+    } else {
+      return; // Invalid length
+    }
   }
   
   Serial.print("Processed command: 0x");
   Serial.print(command, HEX);
-  Serial.print(" Value: ");
-  Serial.println(value);
-  switch(command) {    case COMMAND_BRIGHTNESS:
-      brightness = value; // Use full 16-bit value (0-65535)
+  Serial.print(" 8-bit Value: ");
+  Serial.print(value8bit);
+  Serial.print(" 16-bit Value: ");
+  Serial.println(value16bit);
+  switch(command) {
+    case COMMAND_BRIGHTNESS:
+      brightness = value16bit; // Use full 16-bit value (0-65535)
       {
         // Also update the NeoPixel brightness immediately
         uint8_t neopixelBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, 255);
@@ -120,31 +129,36 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
       }
       break;
     case COMMAND_TOGGLE:
-      ledOn = (value > 0);
+      if (value8bit > 0) {
+        // Turn on: set ledOn to true and ensure we're in a valid mode (not off)
+        ledOn = true;
+        if (ledMode == 3) { // If currently in off mode (mode 3)
+          ledMode = 2; // Default to white mode when turning on
+        }
+      } else {
+        // Turn off: set mode to off mode
+        ledOn = false;
+        ledMode = 3; // Set to off mode
+      }
       break;
     case COMMAND_MODE:
-      if (value >= MODE_MIN && value <= MODE_MAX) {
-        ledMode = value;
+      // Remote sends 0-2 for valid modes, map directly
+      if (value8bit >= 0 && value8bit <= 2) {
+        ledMode = value8bit;
+        ledOn = true; // Ensure LEDs are on when setting a mode
       }
       break;
     case COMMAND_HUE:
-      globalHue = value;
+      globalHue = value16bit;
       break;
     case COMMAND_TEMPERATURE:
-      temperature = value;
+      temperature = value16bit;
       break;
     default:
       Serial.print("Unknown command received: 0x");
       Serial.println(command, HEX);
       break;
   }
-}
-
-void initOTA() {
-  ArduinoOTA.setHostname("ESP32-LED-Controller");
-  ArduinoOTA.setPassword("pwd611493");
-  ArduinoOTA.begin();
-  Serial.println("OTA Initialized");
 }
 
 void initWiFi(const char* ssid, const char* password) {
@@ -167,8 +181,6 @@ void initWiFi(const char* ssid, const char* password) {
       Serial.println("\nWiFi connected!");
       Serial.print("IP Address: ");
       Serial.println(WiFi.localIP());
-      Serial.println("Configuring OTA...");
-      initOTA();
       
       // Re-initialize ESP-NOW after WiFi is connected
       // This is important as connecting to WiFi can affect ESP-NOW
@@ -222,7 +234,7 @@ void showBootIndicator(int stage) {
     case 4: // After WiFi connected
       stageColor = colorYellow;
       break;
-    case 5: // After OTA initialized
+    case 5: // After LEDs configured
       stageColor = colorPurple;
       break;
     case 6: // Ready to start main loop
@@ -297,7 +309,7 @@ void setup() {
   // Stage 3: About to connect to WiFi
   showBootIndicator(3);
   
-  // Then initialize regular WiFi for OTA updates
+  // Initialize WiFi for network connectivity
   initWiFi(WIFI_SSID, WIFI_PASSWORD);
   
   // Stage 4: WiFi connected indicator
@@ -657,7 +669,6 @@ void effectWhite() {
 }
 
 void loop() {
-  ArduinoOTA.handle();
   checkButton();  // Check if the boot button was pressed
   effects[ledMode]();
 }
