@@ -13,7 +13,10 @@ uint16_t brightness = 65535; // Using uint16_t with range 0-65535
 uint16_t globalHue = 0;
 bool ledOn = true;
 float speedModifier = 3.0;
-int ledMode = 2; // 0: Rainbow, 1: Hue, 2: White
+int ledMode = 0; // 0: Rainbow, 1: Hue, 2: White
+
+// Global RGB clearing state
+bool rgbStripsCleared = false;
 
 // Button state tracking
 bool buttonPressed = false;
@@ -24,14 +27,12 @@ unsigned long lastButtonPress = 0;  // For debouncing
 void effectRainbow(void);
 void effectHue(void);
 void effectWhite(void);
-void effectOff(void);
 
 // Define an array holding functions for each effect
 void (*effects[])(void) = {
   &effectRainbow,
   &effectHue, // placeholder for effectHue - needs special handling due to parameters
-  &effectWhite,
-  &effectOff
+  &effectWhite
 };
 
 Adafruit_NeoPixel strip_l1(NUM_LEDS, PIN_DATA1, NEO_RGB + NEO_KHZ800);
@@ -43,6 +44,7 @@ Adafruit_NeoPixel strip_r2(NUM_LEDS, PIN_DATA4, NEO_RGB + NEO_KHZ800);
 void setWhiteLEDs(uint16_t warmDuty, uint16_t coolDuty) {
   uint16_t warmDutyCalcd = ledOn ? warmDuty : 0;
   uint16_t coolDutyCalcd = ledOn ? coolDuty : 0;
+  
   ledcWrite(PWM_CHANNEL_0, coolDutyCalcd);
   ledcWrite(PWM_CHANNEL_1, warmDutyCalcd);
 }
@@ -56,10 +58,8 @@ void checkButton() {
   if (!currentState && !buttonPressed && (now - lastButtonPress > BUTTON_DEBOUNCE_TIME)) {
     buttonPressed = true;
     lastButtonPress = now;
-    
-    // Toggle LED state
-    ledOn = true;
-    ledMode += 1; // Cycle through modes
+      // Cycle through modes
+    ledMode += 1;
     if (ledMode > MODE_MAX) {
       ledMode = MODE_MIN; // Reset to first mode
     }
@@ -121,25 +121,18 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
         strip_l1.setBrightness(neopixelBrightness);
         strip_l2.setBrightness(neopixelBrightness);
       }
-      break;
-    case COMMAND_TOGGLE:
+      break;    case COMMAND_TOGGLE:
       if (value8bit > 0) {
-        // Turn on: set ledOn to true and ensure we're in a valid mode (not off)
+        // Turn on LEDs
         ledOn = true;
-        if (ledMode == 3) { // If currently in off mode (mode 3)
-          ledMode = 2; // Default to white mode when turning on
-        }
       } else {
-        // Turn off: set mode to off mode
+        // Turn off LEDs
         ledOn = false;
-        ledMode = 3; // Set to off mode
       }
-      break;
-    case COMMAND_MODE:
+      break;    case COMMAND_MODE:
       // Remote sends 0-2 for valid modes, map directly
       if (value8bit >= 0 && value8bit <= 2) {
         ledMode = value8bit;
-        ledOn = true; // Ensure LEDs are on when setting a mode
       }
       break;
     case COMMAND_HUE:
@@ -298,6 +291,37 @@ void setup() {
 
 // New function: updateRainbowEffect() performs the rainbow animation using variable intervals
 void effectRainbow() {
+  // Turn off white LEDs in this mode
+  static bool whiteLedsOff = false;
+  static bool cleared = false;
+  static int lastMode = -1;
+  
+  // Reset flags when mode changes
+  if (lastMode != ledMode) {
+    whiteLedsOff = false;
+    lastMode = ledMode;
+  }
+  
+  if (!whiteLedsOff) {
+    setWhiteLEDs(0, 0);
+    whiteLedsOff = true;
+  }
+  
+  // If LEDs are off, clear all strips and return
+  if (!ledOn) {
+    if (!cleared) {
+      strip_r1.clear(); strip_r1.show();
+      strip_r2.clear(); strip_r2.show();
+      strip_l1.clear(); strip_l1.show();
+      strip_l2.clear(); strip_l2.show();
+      cleared = true;
+    }
+    return;
+  }
+  
+  // Reset cleared flag when LEDs are on
+  cleared = false;
+  
   static unsigned long lastRainbowUpdate = 0;
   static uint8_t hue = 0;
   static unsigned long rainbowInterval = RAINBOW_INTERVAL_HIGH;
@@ -307,17 +331,6 @@ void effectRainbow() {
   static bool isWaiting = false;
   static float transitionProgress = 0.0;
   static const float transitionSpeed = 0.005;  // Controls transition speed
-  
-  // If LEDs are off, clear all strips and return
-  if (!ledOn) {
-    if (strip_r1.getBrightness() > 0) {
-      strip_r1.clear(); strip_r1.show();
-      strip_r2.clear(); strip_r2.show();
-      strip_l1.clear(); strip_l1.show();
-      strip_l2.clear(); strip_l2.show();
-    }
-    return;
-  }
   
   unsigned long now = millis();
   if (now - lastRainbowUpdate >= rainbowInterval) {
@@ -397,6 +410,37 @@ void effectRainbow() {
 }
 
 void effectHue() {
+  // Turn off white LEDs in this mode
+  static bool whiteLedsOff = false;
+  static bool cleared = false;
+  static int lastMode = -1;
+  
+  // Reset flags when mode changes
+  if (lastMode != ledMode) {
+    whiteLedsOff = false;
+    lastMode = ledMode;
+  }
+  
+  if (!whiteLedsOff) {
+    setWhiteLEDs(0, 0);
+    whiteLedsOff = true;
+  }
+  
+  // If LEDs are off, clear all strips and return
+  if (!ledOn) {
+    if (!cleared) {
+      strip_r1.clear(); strip_r1.show();
+      strip_r2.clear(); strip_r2.show();
+      strip_l1.clear(); strip_l1.show();
+      strip_l2.clear(); strip_l2.show();
+      cleared = true;
+    }
+    return;
+  }
+  
+  // Reset cleared flag when LEDs are on
+  cleared = false;
+  
   static float hotspots_left[3] = {0.0, NUM_LEDS * 0.3, NUM_LEDS * 0.7};
   static float hotspots_right[3] = {NUM_LEDS * 0.15, NUM_LEDS * 0.45, NUM_LEDS * 0.85};
   static float speeds_left[3] = {0.02, 0.03, 0.025};
@@ -404,17 +448,6 @@ void effectHue() {
   static unsigned long lastUpdate = 0;
   static unsigned long lastSpeedChange = 0; // Track when we last changed speeds
   static unsigned long lastJump = 0;        // Track when hotspots last jumped
-  
-  // If LEDs are off, clear all strips and return
-  if (!ledOn) {
-    if (strip_r1.getBrightness() > 0) {
-      strip_r1.clear(); strip_r1.show();
-      strip_r2.clear(); strip_r2.show();
-      strip_l1.clear(); strip_l1.show();
-      strip_l2.clear(); strip_l2.show();
-    }
-    return;
-  }
   
   const uint16_t HUE_RANGE = 1000;
   const unsigned long MIN_SPEED_CHANGE_INTERVAL = 2000; // Minimum 2 seconds between speed changes
@@ -503,25 +536,7 @@ void effectHue() {
   }
 }
 
-void effectOff() {
-  // Turn off all LEDs
-  ledOn = false;
-  
-  // Clear all NeoPixel strips
-  strip_r1.clear();
-  strip_r2.clear();
-  strip_l1.clear();
-  strip_l2.clear();
-  
-  // Show the cleared state
-  strip_r1.show();
-  strip_r2.show();
-  strip_l1.show();
-  strip_l2.show();
-  
-  // Also turn off white LEDs
-  setWhiteLEDs(0, 0);
-}
+
 
 void setAllStripsToHue(uint16_t hue) {
   // Convert HSV to RGB color
@@ -543,77 +558,63 @@ void setAllStripsToHue(uint16_t hue) {
   strip_l2.show();
 }
 
-void effectWhite() {
-  // For PWM white LEDs
-  static uint16_t lastBrightness = 0;
-  static uint16_t lastTemperature = 0;
+
+
+void loop() {
+  static int lastGlobalMode = -1;
   
-  // Only update white LEDs if values have changed
-  if (lastBrightness != brightness || lastTemperature != temperature || !ledOn) {
+  checkButton();  // Check if the boot button was pressed
+    // Check if mode changed and turn off white LEDs if switching away from white mode
+  if (lastGlobalMode != ledMode) {
+    if (lastGlobalMode == 2 && ledMode != 2) {
+      // Switching away from white mode - turn off white LEDs immediately
+      ledcWrite(PWM_CHANNEL_0, 0);
+      ledcWrite(PWM_CHANNEL_1, 0);
+    }
+    // Reset global RGB clearing flag when mode changes
+    rgbStripsCleared = false;
+    lastGlobalMode = ledMode;
+  }
+  
+  // Only call effect function if mode is valid
+  if (ledOn && ledMode >= 0 && ledMode <= 2) {
+    effects[ledMode]();
+  } else {
+    // If LEDs are off, ensure all strips are cleared
+    ledcWrite(PWM_CHANNEL_0, 0);
+    ledcWrite(PWM_CHANNEL_1, 0);
+    strip_r1.clear(); strip_r1.show();
+    strip_r2.clear(); strip_r2.show();
+    strip_l1.clear(); strip_l1.show();
+    strip_l2.clear(); strip_l2.show();
+  }
+}
+
+void effectWhite() {
+  // Always clear RGB strips when entering white mode
+  if (!rgbStripsCleared) {
+    strip_r1.clear(); strip_r1.show();
+    strip_r2.clear(); strip_r2.show();
+    strip_l1.clear(); strip_l1.show();
+    strip_l2.clear(); strip_l2.show();
+    rgbStripsCleared = true;
+  }
+  
+  // Handle white LEDs based on ledOn state
+  if (ledOn) {
+    // Calculate and set white LED values using specified code
     uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1;
     uint16_t scaledBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, maxDuty);
     uint16_t warmDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, 0, scaledBrightness);
     uint16_t coolDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, scaledBrightness, 0);
     
-    setWhiteLEDs(warmDuty, coolDuty);
-    
-    lastBrightness = brightness;
-    lastTemperature = temperature;
+    // Directly write to PWM channels
+    ledcWrite(PWM_CHANNEL_0, coolDuty);
+    ledcWrite(PWM_CHANNEL_1, warmDuty);
+  } else {
+    // Turn off white LEDs when ledOn is false
+    ledcWrite(PWM_CHANNEL_0, 0);
+    ledcWrite(PWM_CHANNEL_1, 0);
   }
-
-  // For NeoPixel strips
-  static uint16_t lastNeopixelBrightness = 0;
-  static bool needsUpdate = true;
-  
-  // If LEDs are off, clear all NeoPixel strips and return early
-  if (!ledOn) {
-    if (strip_r1.getBrightness() > 0) {
-      // Turn off all NeoPixel strips
-      strip_r1.clear(); strip_r1.show();
-      strip_r2.clear(); strip_r2.show();
-      strip_l1.clear(); strip_l1.show();
-      strip_l2.clear(); strip_l2.show();
-      needsUpdate = true; // Force update when turned back on
-    }
-    return;
-  }
-  
-  // Calculate NeoPixel brightness value only once
-  uint8_t neopixelBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, 100);
-    // Only update NeoPixels if brightness changed or first run
-  if (lastNeopixelBrightness != neopixelBrightness || needsUpdate) {
-    // Calculate color once - warm white for NeoPixels
-    uint32_t finalColor = strip_r1.Color(255, 150, 100);
-    
-    // Update all strips with the same brightness and color
-    strip_r1.setBrightness(neopixelBrightness);
-    strip_r2.setBrightness(neopixelBrightness);
-    strip_l1.setBrightness(neopixelBrightness);
-    strip_l2.setBrightness(neopixelBrightness);
-    
-    strip_r1.fill(finalColor, 0, NUM_LEDS);
-    strip_r2.fill(finalColor, 0, NUM_LEDS);
-    strip_l1.fill(finalColor, 0, NUM_LEDS);
-    strip_l2.fill(finalColor, 0, NUM_LEDS);
-    
-    strip_l1.setPixelColor(0, 0);
-    strip_l2.setPixelColor(0, 0);
-    
-    // Show all strips
-    strip_r1.show();
-    strip_r2.show();
-    strip_l1.show();
-    strip_l2.show();
-    
-    lastNeopixelBrightness = neopixelBrightness;
-    needsUpdate = false;
-  }
-
-  delay(10);
-}
-
-void loop() {
-  checkButton();  // Check if the boot button was pressed
-  effects[ledMode]();
 }
 

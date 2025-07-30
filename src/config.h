@@ -26,7 +26,7 @@
 
 // BLE Mode and Brightness Value Range
 #define MODE_MIN 0
-#define MODE_MAX 3
+#define MODE_MAX 2
 #define BRIGHTNESS_MIN 0
 #define BRIGHTNESS_MAX 65535
 #define HUE_MIN 0
