@@ -6,11 +6,6 @@
 
 ESPNowClient espNow;
 
-IPAddress local_IP(192, 168, 1, 245);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
-
-
 // Temperature is the proportion of warm white to cool white
 // 0 is all cool white, 65535 is all warm white
 uint16_t temperature = 32767;
@@ -161,41 +156,6 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
   }
 }
 
-void initWiFi(const char* ssid, const char* password) {
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(ssid);
-
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_STA);
-  WiFi.config(local_IP, gateway, subnet);
-  WiFi.begin(ssid, password);
-
-  int timeout = 20;  // Timeout in seconds
-  while (WiFi.status() != WL_CONNECTED && timeout > 0) {
-      delay(1000);
-      Serial.print(".");
-      timeout--;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nWiFi connected!");
-      Serial.print("IP Address: ");
-      Serial.println(WiFi.localIP());
-      
-      // Re-initialize ESP-NOW after WiFi is connected
-      // This is important as connecting to WiFi can affect ESP-NOW
-      if (esp_now_init() == ESP_OK) {
-        Serial.println("ESP-NOW re-initialized successfully");
-        espNow.setReceiveCallback(onReceive);
-      } else {
-        Serial.println("Failed to re-initialize ESP-NOW");
-      }
-  } else {
-      Serial.println("\nFailed to connect to WiFi.");
-      ESP.restart();
-  }
-}
-
 // Show a specific boot stage indicator on the LED strips
 void showBootIndicator(int stage) {
   // All strips should be initialized before calling this
@@ -228,16 +188,10 @@ void showBootIndicator(int stage) {
     case 2: // After ESP-NOW init
       stageColor = colorGreen;
       break;
-    case 3: // During WiFi connection
-      stageColor = colorBlue;
-      break;
-    case 4: // After WiFi connected
-      stageColor = colorYellow;
-      break;
-    case 5: // After LEDs configured
+    case 3: // After LEDs configured
       stageColor = colorPurple;
       break;
-    case 6: // Ready to start main loop
+    case 4: // Ready to start main loop
       stageColor = colorWhite;
       break;
     default:
@@ -306,15 +260,6 @@ void setup() {
   
   espNow.setReceiveCallback(onReceive);
   
-  // Stage 3: About to connect to WiFi
-  showBootIndicator(3);
-  
-  // Initialize WiFi for network connectivity
-  initWiFi(WIFI_SSID, WIFI_PASSWORD);
-  
-  // Stage 4: WiFi connected indicator
-  showBootIndicator(4);
-  
   // LED strip setup
   ledcSetup(PWM_CHANNEL_0, PWM_FREQ, PWM_RESOLUTION);
   ledcSetup(PWM_CHANNEL_1, PWM_FREQ, PWM_RESOLUTION);
@@ -326,11 +271,11 @@ void setup() {
   Serial.println("Temperature: " + String(temperature));
   Serial.println("Brightness: " + String(brightness));
   
-  // Stage 5: LEDs configured
-  showBootIndicator(5);
+  // Stage 3: LEDs configured
+  showBootIndicator(3);
   
-  // Stage 6: Boot complete - ready to run main loop
-  showBootIndicator(6);
+  // Stage 4: Boot complete - ready to run main loop
+  showBootIndicator(4);
   
   // Clear all strips to prepare for the main loop functionality
   strip_r1.clear();

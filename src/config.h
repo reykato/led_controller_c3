@@ -1,10 +1,6 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// WiFi Configuration
-#define WIFI_SSID     "T&A IoT"
-#define WIFI_PASSWORD "beepb00pbeep"
-
 // PWM Configuration
 #define PWM_FREQ       400   // frequency in Hz
 #define PWM_CHANNEL_0  0
