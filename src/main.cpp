@@ -7,10 +7,10 @@
 ESPNowClient espNow;
 
 // Temperature is the proportion of warm white to cool white
-// 0 is all cool white, 65535 is all warm white
-uint16_t temperature = 32767;
-uint16_t brightness = 65535; // Using uint16_t with range 0-65535
-uint16_t globalHue = 0;
+// 0 is all cool white, 255 is all warm white
+uint8_t temperature = 127;
+uint8_t brightness = 255; // Using uint8_t with range 0-255
+uint8_t globalHue = 0;
 bool ledOn = true;
 float speedModifier = 3.0;
 int ledMode = 0; // 0: Rainbow, 1: Hue, 2: White
@@ -85,41 +85,21 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
   
   uint8_t command = data[0];
   uint8_t value8bit = data[1];  // Always use 8-bit value from remote
-  uint16_t value16bit;
-  
-  // Handle state value based on command type
-  if (command == COMMAND_MODE || command == COMMAND_TOGGLE) {
-    // Mode and toggle commands use 8-bit values directly
-    value16bit = value8bit;
-  } else {
-    // Other commands (brightness, hue, temperature) expand 8-bit to 16-bit
-    if (len == 2) {
-      // If only 1 byte of state, expand it to 16-bit range (0-255 to 0-65535)
-      value16bit = (uint16_t)data[1] << 8 | data[1];
-    } else if (len >= 3) {
-      // If 2 bytes of state, combine into 16-bit integer
-      value16bit = (uint16_t)data[1] << 8 | data[2];
-    } else {
-      return; // Invalid length
-    }
-  }
   
   Serial.print("Processed command: 0x");
   Serial.print(command, HEX);
-  Serial.print(" 8-bit Value: ");
-  Serial.print(value8bit);
-  Serial.print(" 16-bit Value: ");
-  Serial.println(value16bit);
+  Serial.print(" Value: ");
+  Serial.println(value8bit);
+  
   switch(command) {
     case COMMAND_BRIGHTNESS:
-      brightness = value16bit; // Use full 16-bit value (0-65535)
+      brightness = value8bit; // Use 8-bit value (0-255)
       {
         // Also update the NeoPixel brightness immediately
-        uint8_t neopixelBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, 255);
-        strip_r1.setBrightness(neopixelBrightness);
-        strip_r2.setBrightness(neopixelBrightness);
-        strip_l1.setBrightness(neopixelBrightness);
-        strip_l2.setBrightness(neopixelBrightness);
+        strip_r1.setBrightness(brightness);
+        strip_r2.setBrightness(brightness);
+        strip_l1.setBrightness(brightness);
+        strip_l2.setBrightness(brightness);
       }
       break;    case COMMAND_TOGGLE:
       if (value8bit > 0) {
@@ -136,10 +116,10 @@ void onReceive(const uint8_t *mac, const uint8_t *data, size_t len) {
       }
       break;
     case COMMAND_HUE:
-      globalHue = value16bit;
+      globalHue = value8bit;
       break;
     case COMMAND_TEMPERATURE:
-      temperature = value16bit;
+      temperature = value8bit;
       break;
     default:
       Serial.print("Unknown command received: 0x");
@@ -224,12 +204,11 @@ void setup() {
   strip_l1.begin();
   strip_l2.begin();
   
-  // Map 16-bit brightness (0-65535) to 8-bit (0-255) for NeoPixels
-  uint8_t neopixelBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, 255);
-  strip_r1.setBrightness(neopixelBrightness);
-  strip_r2.setBrightness(neopixelBrightness);
-  strip_l1.setBrightness(neopixelBrightness);
-  strip_l2.setBrightness(neopixelBrightness);
+  // Set brightness directly since we're now using 8-bit values (0-255)
+  strip_r1.setBrightness(brightness);
+  strip_r2.setBrightness(brightness);
+  strip_l1.setBrightness(brightness);
+  strip_l2.setBrightness(brightness);
   
   // Stage 1: Initial boot indicator
   showBootIndicator(1);
@@ -449,7 +428,7 @@ void effectHue() {
   static unsigned long lastSpeedChange = 0; // Track when we last changed speeds
   static unsigned long lastJump = 0;        // Track when hotspots last jumped
   
-  const uint16_t HUE_RANGE = 1000;
+  const uint16_t HUE_RANGE = 3000; // Increased range for more hue variation with 8-bit input
   const unsigned long MIN_SPEED_CHANGE_INTERVAL = 2000; // Minimum 2 seconds between speed changes
   const unsigned long MIN_JUMP_INTERVAL = 5000;         // Minimum 5 seconds between jumps
   
@@ -498,7 +477,9 @@ void effectHue() {
       }
       
       // Apply a subtle variation to the hue
-      uint16_t pixelHue = globalHue + (uint16_t)(intensity * HUE_RANGE);
+      // Scale 8-bit globalHue (0-255) to 16-bit range (0-65535) for ColorHSV
+      uint16_t baseHue = (uint16_t)globalHue << 8; // Convert 8-bit to 16-bit
+      uint16_t pixelHue = baseHue + (uint16_t)(intensity * HUE_RANGE);
       
       // Set colors with full saturation and slightly variable value for depth
       uint8_t value = 220 + (uint8_t)(intensity * 35);  // 220-255 range for value
@@ -517,7 +498,8 @@ void effectHue() {
         intensity = max(intensity, hotspotInfluence);
       }
       
-      uint16_t pixelHue = globalHue + (uint16_t)(intensity * HUE_RANGE);
+      uint16_t baseHue = (uint16_t)globalHue << 8; // Convert 8-bit to 16-bit
+      uint16_t pixelHue = baseHue + (uint16_t)(intensity * HUE_RANGE);
       uint8_t value = 220 + (uint8_t)(intensity * 35);
       uint32_t color = strip_r1.ColorHSV(pixelHue, 255, value);
       strip_r1.setPixelColor(i, color);
@@ -538,9 +520,10 @@ void effectHue() {
 
 
 
-void setAllStripsToHue(uint16_t hue) {
-  // Convert HSV to RGB color
-  uint32_t color = strip_r1.ColorHSV(hue, 255, 255);
+void setAllStripsToHue(uint8_t hue) {
+  // Convert 8-bit hue (0-255) to 16-bit (0-65535) for ColorHSV
+  uint16_t hue16bit = (uint16_t)hue << 8;
+  uint32_t color = strip_r1.ColorHSV(hue16bit, 255, 255);
   
   // Fill all strips with the same color
   strip_r1.fill(color, 0, NUM_LEDS);

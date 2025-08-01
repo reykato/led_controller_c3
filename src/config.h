@@ -28,11 +28,11 @@
 #define MODE_MIN 0
 #define MODE_MAX 2
 #define BRIGHTNESS_MIN 0
-#define BRIGHTNESS_MAX 65535
+#define BRIGHTNESS_MAX 255
 #define HUE_MIN 0
-#define HUE_MAX 65535
+#define HUE_MAX 255
 #define TEMPERATURE_MIN 0
-#define TEMPERATURE_MAX 65535
+#define TEMPERATURE_MAX 255
 
 // Effect Constants
 #define RAINBOW_INTERVAL_HIGH 23
