@@ -6,8 +6,8 @@
 
 ESPNowClient espNow;
 
-// Temperature is the proportion of warm white to cool white
-// 0 is all cool white, 255 is all warm white
+// Temperature controls warm/cool white balance
+// 0 = all cool white, 128 = both at full power (neutral white), 255 = all warm white
 uint8_t temperature = 127;
 uint8_t brightness = 255; // Using uint8_t with range 0-255
 uint8_t globalHue = 0;
@@ -256,14 +256,24 @@ void setup() {
   strip_r1.show();
   strip_r2.show();
   strip_l1.show();
-  strip_l2.show();
-  // Also make sure the white LEDs start in the correct state
+  strip_l2.show();  // Also make sure the white LEDs start in the correct state
   if (ledMode == 2) {
     // Initialize white LEDs if in white mode
     uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1; // 4095 for 12-bit resolution
     uint16_t scaledBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, maxDuty);
-    uint16_t warmDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, 0, scaledBrightness);
-    uint16_t coolDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, scaledBrightness, 0);
+    
+    // Temperature mapping where 128 = both channels at full power
+    uint16_t warmDuty, coolDuty;
+    if (temperature <= 128) {
+      // Cool to neutral: cool goes from full to full, warm goes from 0 to full
+      coolDuty = scaledBrightness;
+      warmDuty = map(temperature, 0, 128, 0, scaledBrightness);
+    } else {
+      // Neutral to warm: warm stays at full, cool goes from full to 0
+      warmDuty = scaledBrightness;
+      coolDuty = map(temperature, 128, 255, scaledBrightness, 0);
+    }
+    
     setWhiteLEDs(warmDuty, coolDuty);
   }
 }
@@ -574,30 +584,64 @@ void loop() {
 }
 
 void effectWhite() {
-  // Always clear RGB strips when entering white mode
-  if (!rgbStripsCleared) {
-    strip_r1.clear(); strip_r1.show();
-    strip_r2.clear(); strip_r2.show();
-    strip_l1.clear(); strip_l1.show();
-    strip_l2.clear(); strip_l2.show();
-    rgbStripsCleared = true;
-  }
-  
   // Handle white LEDs based on ledOn state
   if (ledOn) {
     // Calculate and set white LED values using specified code
     uint16_t maxDuty = (1 << PWM_RESOLUTION) - 1;
     uint16_t scaledBrightness = map(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, 0, maxDuty);
-    uint16_t warmDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, 0, scaledBrightness);
-    uint16_t coolDuty = map(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX, scaledBrightness, 0);
+    
+    // Temperature mapping where 128 = both channels at full power
+    uint16_t warmDuty, coolDuty;
+    if (temperature <= 128) {
+      // Cool to neutral: cool goes from full to full, warm goes from 0 to full
+      coolDuty = scaledBrightness;
+      warmDuty = map(temperature, 0, 128, 0, scaledBrightness);
+    } else {
+      // Neutral to warm: warm stays at full, cool goes from full to 0
+      warmDuty = scaledBrightness;
+      coolDuty = map(temperature, 128, 255, scaledBrightness, 0);
+    }
     
     // Directly write to PWM channels
     ledcWrite(PWM_CHANNEL_0, coolDuty);
     ledcWrite(PWM_CHANNEL_1, warmDuty);
+    
+    // Add RGB strips for brightness boost at low level
+    // Use compensated white values (higher red/green to match blue intensity)
+    const uint8_t rgbBoostBrightness = 10;
+    uint32_t whiteColor = strip_r1.Color(rgbBoostBrightness * 1.2, rgbBoostBrightness * 1.1, rgbBoostBrightness);
+    
+    // Fill all RGB strips with low-brightness white
+    strip_r1.fill(whiteColor, 0, NUM_LEDS);
+    strip_r2.fill(whiteColor, 0, NUM_LEDS);
+    strip_l1.fill(whiteColor, 0, NUM_LEDS);
+    strip_l2.fill(whiteColor, 0, NUM_LEDS);
+    
+    // Keep first pixels on left strips black as per other effects
+    strip_l1.setPixelColor(0, 0);
+    strip_l2.setPixelColor(0, 0);
+    
+    // Show RGB strips
+    strip_r1.show();
+    strip_r2.show();
+    strip_l1.show();
+    strip_l2.show();
+    
+    // Reset RGB clearing flag since we're now using them
+    rgbStripsCleared = false;
   } else {
     // Turn off white LEDs when ledOn is false
     ledcWrite(PWM_CHANNEL_0, 0);
     ledcWrite(PWM_CHANNEL_1, 0);
+    
+    // Also clear RGB strips when LEDs are off
+    if (!rgbStripsCleared) {
+      strip_r1.clear(); strip_r1.show();
+      strip_r2.clear(); strip_r2.show();
+      strip_l1.clear(); strip_l1.show();
+      strip_l2.clear(); strip_l2.show();
+      rgbStripsCleared = true;
+    }
   }
 }
 
